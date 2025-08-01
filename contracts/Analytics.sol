@@ -265,7 +265,7 @@ contract Analytics is IAnalytics, AccessControl, ReentrancyGuard, Pausable {
         // Widget creator is tracked separately
         widget.createdAt = block.timestamp;
         widget.updatedAt = block.timestamp;
-        widget.isActive = true;
+        // widget.isActive = true; // Field removed from Widget struct
     }
 
     function updateWidget(
@@ -273,7 +273,7 @@ contract Analytics is IAnalytics, AccessControl, ReentrancyGuard, Pausable {
         WidgetConfig calldata config
     ) external override {
         require(hasRole(ANALYTICS_MANAGER_ROLE, msg.sender), "Not authorized");
-        require(widgets[widgetId].isActive, "Widget not found");
+        require(widgets[widgetId].widgetId != bytes32(0), "Widget not found");
         
         Widget storage widget = widgets[widgetId];
         widget.config = config;
@@ -283,10 +283,11 @@ contract Analytics is IAnalytics, AccessControl, ReentrancyGuard, Pausable {
     function refreshWidget(
         bytes32 widgetId
     ) external override {
-        require(widgets[widgetId].isActive, "Widget not found");
+        require(widgets[widgetId].widgetId != bytes32(0), "Widget not found");
         
         Widget storage widget = widgets[widgetId];
-        widget.lastRefresh = block.timestamp;
+        // widget.lastRefresh = block.timestamp; // Field removed from Widget struct
+        widget.updatedAt = block.timestamp;
         
         // Update widget data based on metrics
         _updateWidgetData(widgetId);
@@ -296,7 +297,7 @@ contract Analytics is IAnalytics, AccessControl, ReentrancyGuard, Pausable {
         bytes32 widgetId,
         string calldata newName
     ) external override returns (bytes32 newWidgetId) {
-        require(widgets[widgetId].isActive, "Widget not found");
+        require(widgets[widgetId].widgetId != bytes32(0), "Widget not found");
         
         Widget storage originalWidget = widgets[widgetId];
         newWidgetId = keccak256(abi.encodePacked(newName, block.timestamp, msg.sender));
@@ -310,7 +311,7 @@ contract Analytics is IAnalytics, AccessControl, ReentrancyGuard, Pausable {
         // Widget creator is tracked separately
         newWidget.createdAt = block.timestamp;
         newWidget.updatedAt = block.timestamp;
-        newWidget.isActive = true;
+        // newWidget.isActive = true; // Field removed from Widget struct
     }
 
     // Report functions
@@ -394,7 +395,7 @@ contract Analytics is IAnalytics, AccessControl, ReentrancyGuard, Pausable {
         AlertSeverity severity,
         AlertConfig calldata config
     ) external override onlyRole(ALERT_MANAGER_ROLE) returns (bytes32 alertId) {
-        require(metrics[metricId].isActive, "Metric not found");
+        require(metrics[metricId].config.isActive, "Metric not found");
         
         alertId = keccak256(abi.encodePacked(name, metricId, block.timestamp));
         
@@ -567,13 +568,13 @@ contract Analytics is IAnalytics, AccessControl, ReentrancyGuard, Pausable {
 
     // Additional required functions from interface (simplified implementations)
     function incrementMetric(bytes32 metricId, uint256 amount) external override onlyRole(DATA_PROVIDER_ROLE) {
-        require(metrics[metricId].isActive, "Metric not found");
+        require(metrics[metricId].config.isActive, "Metric not found");
         metrics[metricId].value += amount;
         metrics[metricId].timestamp = block.timestamp;
     }
 
     function decrementMetric(bytes32 metricId, uint256 amount) external override onlyRole(DATA_PROVIDER_ROLE) {
-        require(metrics[metricId].isActive, "Metric not found");
+        require(metrics[metricId].config.isActive, "Metric not found");
         require(metrics[metricId].value >= amount, "Insufficient value");
         metrics[metricId].value -= amount;
         metrics[metricId].timestamp = block.timestamp;
