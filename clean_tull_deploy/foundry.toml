@@ -1,0 +1,19 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+remappings = [
+    "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+    "forge-std/=lib/forge-std/src/"
+]
+
+# See more config options https://github.com/foundry-rs/foundry/tree/master/crates/config
+
+[rpc_endpoints]
+core_testnet = "https://rpc.test.btcs.network"
+core_mainnet = "https://rpc.coredao.org"
+localhost = "http://127.0.0.1:8545"
+
+[etherscan]
+core_testnet = { key = "${CORE_SCAN_API_KEY}", url = "https://scan.test.btcs.network/api" }
+core_mainnet = { key = "${CORE_SCAN_API_KEY}", url = "https://openapi.coredao.org/api" }
