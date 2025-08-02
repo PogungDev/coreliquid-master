@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/security/Pausable.sol";
-import "@openzeppelin/contracts/utils/math/SafeMath.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
 
 /**
  * @title CoreBitcoinDualStaking
@@ -15,7 +14,6 @@ import "@openzeppelin/contracts/utils/math/SafeMath.sol";
  */
 contract CoreBitcoinDualStaking is ReentrancyGuard, AccessControl, Pausable {
     using SafeERC20 for IERC20;
-    using SafeMath for uint256;
 
     // Roles
     bytes32 public constant VALIDATOR_ROLE = keccak256("VALIDATOR_ROLE");
@@ -168,17 +166,17 @@ contract CoreBitcoinDualStaking is ReentrancyGuard, AccessControl, Pausable {
         });
         
         // Update validator stats
-        validators[validatorId].totalCoreStaked = validators[validatorId].totalCoreStaked.add(coreAmount);
-        validators[validatorId].totalBtcStaked = validators[validatorId].totalBtcStaked.add(btcAmount);
+        validators[validatorId].totalCoreStaked = validators[validatorId].totalCoreStaked + coreAmount;
+        validators[validatorId].totalBtcStaked = validators[validatorId].totalBtcStaked + btcAmount;
         
         // Update global stats
-        totalCoreStaked = totalCoreStaked.add(coreAmount);
-        totalBtcStaked = totalBtcStaked.add(btcAmount);
-        totalActiveStakers = totalActiveStakers.add(1);
+        totalCoreStaked = totalCoreStaked + coreAmount;
+        totalBtcStaked = totalBtcStaked + btcAmount;
+        totalActiveStakers = totalActiveStakers + 1;
         
         // Record epoch snapshot
-        epochStakeSnapshots[currentEpoch][msg.sender] = coreAmount.add(btcAmount);
-        epochTotalStake[currentEpoch] = epochTotalStake[currentEpoch].add(coreAmount.add(btcAmount));
+        epochStakeSnapshots[currentEpoch][msg.sender] = coreAmount + btcAmount;
+        epochTotalStake[currentEpoch] = epochTotalStake[currentEpoch] + coreAmount + btcAmount;
         
         // Add to user's validator history
         userValidatorHistory[msg.sender].push(validatorId);
@@ -203,18 +201,18 @@ contract CoreBitcoinDualStaking is ReentrancyGuard, AccessControl, Pausable {
         require(coreRewards > 0 || btcRewards > 0, "No rewards available");
         
         // Update accumulated rewards
-        stake.accumulatedCoreRewards = stake.accumulatedCoreRewards.add(coreRewards);
-        stake.accumulatedBtcRewards = stake.accumulatedBtcRewards.add(btcRewards);
+        stake.accumulatedCoreRewards = stake.accumulatedCoreRewards + coreRewards;
+        stake.accumulatedBtcRewards = stake.accumulatedBtcRewards + btcRewards;
         stake.lastRewardClaim = block.timestamp;
         
         // Transfer rewards
         if (coreRewards > 0 && coreRewardPool >= coreRewards) {
-            coreRewardPool = coreRewardPool.sub(coreRewards);
+            coreRewardPool = coreRewardPool - coreRewards;
             coreToken.safeTransfer(msg.sender, coreRewards);
         }
         
         if (btcRewards > 0 && btcRewardPool >= btcRewards) {
-            btcRewardPool = btcRewardPool.sub(btcRewards);
+            btcRewardPool = btcRewardPool - btcRewards;
             btcToken.safeTransfer(msg.sender, btcRewards);
         }
         
@@ -261,8 +259,9 @@ contract CoreBitcoinDualStaking is ReentrancyGuard, AccessControl, Pausable {
         require(stake.isActive, "No active stake");
         
         // Harvest any pending rewards first
-        if (_calculateRewards(msg.sender) > 0) {
-            harvestRewards();
+        (uint256 coreRewards, uint256 btcRewards) = _calculateRewards(msg.sender);
+        if (coreRewards > 0 || btcRewards > 0) {
+            this.harvestRewards();
         }
         
         uint256 coreAmount = stake.coreAmount;
@@ -270,13 +269,13 @@ contract CoreBitcoinDualStaking is ReentrancyGuard, AccessControl, Pausable {
         uint256 validatorId = stake.validatorId;
         
         // Update validator stats
-        validators[validatorId].totalCoreStaked = validators[validatorId].totalCoreStaked.sub(coreAmount);
-        validators[validatorId].totalBtcStaked = validators[validatorId].totalBtcStaked.sub(btcAmount);
+        validators[validatorId].totalCoreStaked = validators[validatorId].totalCoreStaked - coreAmount;
+        validators[validatorId].totalBtcStaked = validators[validatorId].totalBtcStaked - btcAmount;
         
         // Update global stats
-        totalCoreStaked = totalCoreStaked.sub(coreAmount);
-        totalBtcStaked = totalBtcStaked.sub(btcAmount);
-        totalActiveStakers = totalActiveStakers.sub(1);
+        totalCoreStaked = totalCoreStaked - coreAmount;
+        totalBtcStaked = totalBtcStaked - btcAmount;
+        totalActiveStakers = totalActiveStakers - 1;
         
         // Clear user stake
         delete userStakes[msg.sender];
@@ -299,12 +298,12 @@ contract CoreBitcoinDualStaking is ReentrancyGuard, AccessControl, Pausable {
     ) external onlyRole(OPERATOR_ROLE) {
         if (coreAmount > 0) {
             coreToken.safeTransferFrom(msg.sender, address(this), coreAmount);
-            coreRewardPool = coreRewardPool.add(coreAmount);
+            coreRewardPool = coreRewardPool + coreAmount;
         }
         
         if (btcAmount > 0) {
             btcToken.safeTransferFrom(msg.sender, address(this), btcAmount);
-            btcRewardPool = btcRewardPool.add(btcAmount);
+            btcRewardPool = btcRewardPool + btcAmount;
         }
     }
 
@@ -318,38 +317,38 @@ contract CoreBitcoinDualStaking is ReentrancyGuard, AccessControl, Pausable {
         DualStakeInfo storage stake = userStakes[user];
         if (!stake.isActive) return (0, 0);
         
-        uint256 stakingDuration = block.timestamp.sub(stake.lastRewardClaim);
-        uint256 dailyRewards = stakingDuration.div(1 days);
+        uint256 stakingDuration = block.timestamp - stake.lastRewardClaim;
+        uint256 dailyRewards = stakingDuration / 1 days;
         
         if (dailyRewards == 0) return (0, 0);
         
         ValidatorInfo storage validator = validators[stake.validatorId];
         
         // Base rewards calculation
-        uint256 baseCoreReward = stake.coreAmount.mul(dailyRewardRate).mul(dailyRewards).div(10000);
-        uint256 baseBtcReward = stake.btcAmount.mul(dailyRewardRate).mul(dailyRewards).div(10000);
+        uint256 baseCoreReward = stake.coreAmount * dailyRewardRate * dailyRewards / 10000;
+        uint256 baseBtcReward = stake.btcAmount * dailyRewardRate * dailyRewards / 10000;
         
         // Apply dual staking bonus
-        baseCoreReward = baseCoreReward.mul(DUAL_STAKE_BONUS).div(BASE_PERCENTAGE);
-        baseBtcReward = baseBtcReward.mul(DUAL_STAKE_BONUS).div(BASE_PERCENTAGE);
+        baseCoreReward = baseCoreReward * DUAL_STAKE_BONUS / BASE_PERCENTAGE;
+        baseBtcReward = baseBtcReward * DUAL_STAKE_BONUS / BASE_PERCENTAGE;
         
         // Apply validator commission
         uint256 commission = validator.commission;
-        coreRewards = baseCoreReward.mul(10000 - commission).div(10000);
-        btcRewards = baseBtcReward.mul(10000 - commission).div(10000);
+        coreRewards = baseCoreReward * (10000 - commission) / 10000;
+        btcRewards = baseBtcReward * (10000 - commission) / 10000;
         
         // Apply reputation multiplier
         uint256 reputationMultiplier = validator.reputationScore;
-        coreRewards = coreRewards.mul(reputationMultiplier).div(100);
-        btcRewards = btcRewards.mul(reputationMultiplier).div(100);
+        coreRewards = coreRewards * reputationMultiplier / 100;
+        btcRewards = btcRewards * reputationMultiplier / 100;
     }
 
     /**
      * @dev Update epoch if duration has passed
      */
     function _updateEpoch() internal {
-        if (block.timestamp >= lastEpochUpdate.add(epochDuration)) {
-            currentEpoch = currentEpoch.add(1);
+        if (block.timestamp >= lastEpochUpdate + epochDuration) {
+            currentEpoch = currentEpoch + 1;
             lastEpochUpdate = block.timestamp;
             emit EpochAdvanced(currentEpoch, block.timestamp);
         }

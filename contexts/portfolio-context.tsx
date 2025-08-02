@@ -20,7 +20,7 @@ export interface Transaction {
 
 export interface RecentActivity {
   id: string
-  type: "deposit" | "borrow" | "swap" | "compound" | "rebalance" | "revenue_distribution" | "automation_executed" | "yield_harvest" | "ulp"
+  type: "deposit" | "borrow" | "swap" | "withdraw" | "repay" | "compound" | "rebalance" | "revenue_distribution" | "automation_executed" | "yield_harvest" | "ulp" | "revenue_claim" | "ulp_deposit" | "ulp_withdraw"
   status: "completed" | "pending" | "failed"
   amount: number
   token: string
@@ -259,6 +259,10 @@ export type PortfolioAction =
   | { type: "EXECUTE_REBALANCE"; payload: { timestamp: number; gasUsed: number } }
   | { type: "CLAIM_REVENUE"; payload: { amount: number; token: string; source: string } }
   | { type: "EMERGENCY_STOP"; payload: { reason: string; timestamp: number } }
+  // Real transaction handling actions
+  | { type: "START_TRANSACTION"; payload: { id: string; type: Transaction['type']; amount: number; token: string; valueUSD: number } }
+  | { type: "COMPLETE_TRANSACTION"; payload: { id: string; hash: string; gasUsed: number; timestamp: number } }
+  | { type: "FAIL_TRANSACTION"; payload: { id: string; activityId: string; error: string } }
 
 const initialState: PortfolioState = {
   isWalletConnected: false,
@@ -769,6 +773,80 @@ function portfolioReducer(state: PortfolioState, action: PortfolioAction): Portf
           isEnabled: false,
         },
         recentActivities: [emergencyActivity, ...state.recentActivities.slice(0, 9)],
+      }
+    }
+
+    case "START_TRANSACTION": {
+      const transaction: Transaction = {
+        id: action.payload.id,
+        type: action.payload.type,
+        status: "pending",
+        amount: action.payload.amount,
+        token: action.payload.token,
+        valueUSD: action.payload.valueUSD,
+        timestamp: Date.now(),
+      }
+      
+      return {
+        ...state,
+        transactions: [transaction, ...state.transactions],
+        recentActivities: [
+          {
+            id: `activity-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            type: action.payload.type === "vault" ? "deposit" : action.payload.type,
+            status: "pending",
+            amount: action.payload.amount,
+            token: action.payload.token,
+            valueUSD: action.payload.valueUSD,
+            timestamp: Date.now(),
+            description: `${action.payload.type} transaction initiated`,
+          },
+          ...state.recentActivities.slice(0, 19),
+        ],
+      }
+    }
+
+    case "COMPLETE_TRANSACTION": {
+      const updatedTransactions = state.transactions.map(tx => 
+        tx.id === action.payload.id 
+          ? { ...tx, status: "completed" as const, hash: action.payload.hash, gasUsed: action.payload.gasUsed }
+          : tx
+      )
+      
+      const updatedActivities = state.recentActivities.map(activity => 
+        activity.hash === action.payload.hash || activity.timestamp === action.payload.timestamp
+          ? { ...activity, status: "completed" as const, hash: action.payload.hash }
+          : activity
+      )
+      
+      return {
+        ...state,
+        transactions: updatedTransactions,
+        recentActivities: updatedActivities,
+      }
+    }
+
+    case "FAIL_TRANSACTION": {
+      const updatedTransactions = state.transactions.map(tx => 
+        tx.id === action.payload.id 
+          ? { ...tx, status: "failed" as const }
+          : tx
+      )
+      
+      const updatedActivities = state.recentActivities.map(activity => 
+        activity.id === action.payload.activityId
+          ? { ...activity, status: "failed" as const, description: action.payload.error }
+          : activity
+      )
+      
+      return {
+        ...state,
+        transactions: updatedTransactions,
+        recentActivities: updatedActivities,
+        errors: {
+          ...state.errors,
+          general: action.payload.error,
+        },
       }
     }
 

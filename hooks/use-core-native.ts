@@ -296,6 +296,68 @@ export function useCoreNative() {
     functionName: 'getProtocolStats',
   })
 
+  // Update state when contract data changes
+  useEffect(() => {
+    if (userStakingData && Array.isArray(userStakingData)) {
+      setStakingInfo({
+        btcStaked: userStakingData[0] as bigint,
+        coreStaked: userStakingData[1] as bigint,
+        stCoreBalance: userStakingData[2] as bigint,
+        pendingReward: userStakingData[3] as bigint,
+        activeBTCPositions: userStakingData[4] as bigint,
+        activeCorePositions: userStakingData[5] as bigint,
+      })
+    }
+  }, [userStakingData])
+
+  useEffect(() => {
+    if (tiersData && Array.isArray(tiersData)) {
+      const formattedTiers = tiersData.map((tier: any) => ({
+        corePerBTC: tier.corePerBTC as bigint,
+        multiplier: tier.multiplier as bigint,
+        tierName: tier.tierName as string,
+      }))
+      setDualStakingTiers(formattedTiers)
+    }
+  }, [tiersData])
+
+  useEffect(() => {
+    if (activeValidators && Array.isArray(activeValidators)) {
+      // For now, create mock validator info since we don't have detailed validator data
+      const mockValidators = activeValidators.map((addr: string, index: number) => ({
+        validatorAddress: addr,
+        moniker: `Validator ${index + 1}`,
+        website: '',
+        details: `Core validator ${index + 1}`,
+        commission: BigInt(500), // 5%
+        votingPower: BigInt(1000000),
+        totalDelegated: BigInt(5000000),
+        selfStake: BigInt(100000),
+        isActive: true,
+        isJailed: false,
+        jailTime: BigInt(0),
+        hashPower: BigInt(1000),
+        lastRewardClaim: BigInt(Date.now()),
+        slashCount: BigInt(0),
+        uptime: BigInt(9900), // 99%
+      }))
+      setValidators(mockValidators)
+    }
+  }, [activeValidators])
+
+  useEffect(() => {
+    if (protocolStatsData && Array.isArray(protocolStatsData)) {
+      setProtocolStats({
+        totalStaked: protocolStatsData[0] as bigint,
+        totalSupply: protocolStatsData[1] as bigint,
+        exchangeRate: protocolStatsData[2] as bigint,
+        currentAPY: protocolStatsData[3] as bigint,
+        totalRewards: protocolStatsData[4] as bigint,
+        currentEpoch: protocolStatsData[5] as bigint,
+      })
+    }
+  }, [protocolStatsData])
+
   // BTC Staking
   const handleBTCStake = useCallback(async (
     btcTxHash: string,

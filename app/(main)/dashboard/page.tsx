@@ -1,12 +1,16 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { useAccount } from 'wagmi'
+import { BrowserProvider } from 'ethers'
+import { CoreFluidXContracts } from '@/lib/contracts'
+import { CONTRACT_ADDRESSES } from '@/lib/wagmi'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { TrendingUp, TrendingDown, DollarSign, PieChart, Activity, Shield, Zap, Target, AlertTriangle, Settings, BarChart3, Layers, Bot, Lock, Separator, Droplets, RefreshCw, CheckCircle, Clock, Gauge } from "lucide-react"
+import { TrendingUp, TrendingDown, DollarSign, PieChart, Activity, Shield, Zap, Target, AlertTriangle, Settings, BarChart3, Layers, Bot, Lock, Droplets, RefreshCw, CheckCircle, Clock, Gauge } from "lucide-react"
 import { formatCurrency, formatPercentage } from "@/lib/utils"
 import { getTokenData } from "@/lib/token-data"
 import { NeonCard } from "@/components/neon-card"
@@ -290,11 +294,11 @@ export default function DashboardPage() {
                   <span className="text-cyan-400 font-mono">{formatCurrency(state.totalULPValueUSD)}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-gray-400 font-mono">Your Share:</span>
-                  <span className="text-white font-mono">
-                    {ulpData?.userShare ? `${(ulpData.userShare * 100).toFixed(2)}%` : '0.00%'}
-                  </span>
-                </div>
+                    <span className="text-gray-400 font-mono">Pool Utilization:</span>
+                    <span className="text-white font-mono">
+                      {ulpData?.utilizationRatio ? `${(ulpData.utilizationRatio * 100).toFixed(2)}%` : '0.00%'}
+                    </span>
+                  </div>
                 <div className="flex justify-between">
                   <span className="text-gray-400 font-mono">Current APR:</span>
                   <span className="text-green-400 font-mono">

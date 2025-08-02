@@ -56,6 +56,62 @@ const UNIFIED_LIQUIDITY_POOL_ABI = [
   'event Withdraw(address indexed user, address indexed token, uint256 amount)',
 ];
 
+// OptimizedTULL ABI
+const OPTIMIZED_TULL_ABI = [
+  "function deposit(address asset, uint256 amount, address user) external",
+  "function withdraw(address asset, uint256 amount, address user) external",
+  "function accessAssets(address protocol, address asset, uint256 amount) external",
+  "function returnAssets(address protocol, address asset, uint256 amount, uint256 yield) external",
+  "function detectAndReallocate(address asset) external",
+  "function registerProtocol(address protocol, uint256 yieldRate, uint256 maxCapacity) external",
+  "function addSupportedAsset(address asset, uint256 idleThreshold) external",
+  "function getTotalLiquidity(address asset) external view returns (uint256)",
+  "function getAvailableLiquidity(address asset) external view returns (uint256)",
+  "function getUserBalance(address user, address asset) external view returns (uint256)",
+  "function getProtocolAllocation(address protocol, address asset) external view returns (uint256)",
+  "function getSupportedAssets() external view returns (address[])",
+  "function getRegisteredProtocols() external view returns (address[])",
+  "function assetStates(address) external view returns (uint256 totalDeposited, uint256 totalUtilized, uint256 idleThreshold, uint256 lastRebalanceTimestamp)",
+  "function protocols(address) external view returns (bool isActive, uint256 yieldRate, uint256 maxCapacity, uint256 currentAllocation)",
+  "function emergencyWithdraw(address asset, uint256 amount) external",
+  "function updateProtocolYield(address protocol, uint256 newYieldRate) external",
+  "function deactivateProtocol(address protocol) external",
+  "event Deposited(address indexed user, address indexed asset, uint256 amount)",
+  "event Withdrawn(address indexed user, address indexed asset, uint256 amount)",
+  "event AssetAccessed(address indexed protocol, address indexed asset, uint256 amount)",
+  "event AssetReturned(address indexed protocol, address indexed asset, uint256 amount)",
+  "event IdleDetected(address indexed asset, uint256 idleAmount, address indexed targetProtocol)",
+  "event Reallocated(address indexed fromProtocol, address indexed toProtocol, address indexed asset, uint256 amount)",
+  "event ProtocolRegistered(address indexed protocol, uint256 yieldRate)"
+] as const;
+
+const SIMPLE_TULL_ABI = [
+  'function deposit(address asset, uint256 amount, address user) external',
+  'function withdraw(address asset, uint256 amount, address user) external',
+  'function addSupportedAsset(address asset) external',
+  'function registerProtocol(address protocol, string memory name, uint256 apy, uint256 capacity) external',
+  'function allocateToProtocol(address protocol, address asset, uint256 amount) external',
+  'function getTotalLiquidity(address asset) view returns (uint256)',
+  'function getAvailableLiquidity(address asset) view returns (uint256)',
+  'function getUserBalance(address user, address asset) view returns (uint256)',
+  'function getProtocolInfo(address protocol) view returns (tuple(string name, uint256 apy, uint256 capacity, uint256 allocated, bool isActive))',
+  'function getSupportedAssets() view returns (address[])',
+  'function getRegisteredProtocols() view returns (address[])',
+  'function supportedAssets(address) view returns (bool)',
+  'function assetStates(address) view returns (tuple(uint256 totalLiquidity, uint256 availableLiquidity, bool isActive))',
+  'function userBalances(address, address) view returns (uint256)',
+  'function protocols(address) view returns (tuple(string name, uint256 apy, uint256 capacity, uint256 allocated, bool isActive))',
+  'function pause() external',
+  'function unpause() external',
+  'function paused() view returns (bool)',
+  'function setTreasury(address _treasury) external',
+  'function emergencyWithdraw(address asset, uint256 amount) external',
+  'event AssetDeposited(address indexed user, address indexed asset, uint256 amount)',
+  'event AssetWithdrawn(address indexed user, address indexed asset, uint256 amount)',
+  'event ProtocolRegistered(address indexed protocol, string name)',
+  'event LiquidityAllocated(address indexed protocol, address indexed asset, uint256 amount)',
+];
+
 const STCORE_TOKEN_ABI = [
   'function stake() payable returns (uint256)',
   'function unstake(uint256 amount) returns (bool)',
@@ -169,6 +225,18 @@ export class CoreFluidXContracts {
     this.contracts.lendingMarket = new Contract(
       CONTRACT_ADDRESSES.LENDING_MARKET,
       LENDING_MARKET_ABI,
+      this.signer
+    );
+
+    this.contracts.simpleTULL = new Contract(
+      CONTRACT_ADDRESSES.SIMPLE_TULL,
+      SIMPLE_TULL_ABI,
+      this.signer
+    );
+
+    this.contracts.optimizedTULL = new Contract(
+      CONTRACT_ADDRESSES.OPTIMIZED_TULL,
+      OPTIMIZED_TULL_ABI,
       this.signer
     );
   }
@@ -544,6 +612,134 @@ export class CoreFluidXContracts {
     return this.contracts[name];
   }
 
+  // SimpleTULL operations
+   async depositToSimpleTULL(asset: string, amount: string, user: string): Promise<any> {
+     const amountWei = ethers.parseEther(amount);
+     return await this.contracts.simpleTULL.deposit(asset, amountWei, user);
+   }
+
+   async withdrawFromSimpleTULL(asset: string, amount: string, user: string): Promise<any> {
+     const amountWei = ethers.parseEther(amount);
+     return await this.contracts.simpleTULL.withdraw(asset, amountWei, user);
+   }
+
+   async getSimpleTULLUserBalance(user: string, asset: string): Promise<string> {
+     const balance = await this.contracts.simpleTULL.getUserBalance(user, asset);
+     return ethers.formatEther(balance);
+   }
+
+   async getSimpleTULLTotalLiquidity(asset: string): Promise<string> {
+     const total = await this.contracts.simpleTULL.getTotalLiquidity(asset);
+     return ethers.formatEther(total);
+   }
+
+   async getSimpleTULLAvailableLiquidity(asset: string): Promise<string> {
+     const available = await this.contracts.simpleTULL.getAvailableLiquidity(asset);
+     return ethers.formatEther(available);
+   }
+
+   async getSimpleTULLSupportedAssets(): Promise<string[]> {
+     return await this.contracts.simpleTULL.getSupportedAssets();
+   }
+
+   async getSimpleTULLProtocolInfo(protocol: string): Promise<any> {
+     return await this.contracts.simpleTULL.getProtocolInfo(protocol);
+   }
+
+   async addSupportedAssetToTULL(asset: string): Promise<any> {
+     return await this.contracts.simpleTULL.addSupportedAsset(asset);
+   }
+
+   async registerProtocolToTULL(protocol: string, name: string, apy: number, capacity: string): Promise<any> {
+     const capacityWei = ethers.parseEther(capacity);
+     return await this.contracts.simpleTULL.registerProtocol(protocol, name, apy, capacityWei);
+   }
+
+   // OptimizedTULL operations
+   async depositToOptimizedTULL(asset: string, amount: string, user: string): Promise<any> {
+     const amountWei = ethers.parseEther(amount);
+     return await this.contracts.optimizedTULL.deposit(asset, amountWei, user);
+   }
+
+   async withdrawFromOptimizedTULL(asset: string, amount: string, user: string): Promise<any> {
+     const amountWei = ethers.parseEther(amount);
+     return await this.contracts.optimizedTULL.withdraw(asset, amountWei, user);
+   }
+
+   async accessAssetsFromProtocol(protocol: string, asset: string, amount: string): Promise<any> {
+     const amountWei = ethers.parseEther(amount);
+     return await this.contracts.optimizedTULL.accessAssets(protocol, asset, amountWei);
+   }
+
+   async returnAssetsToProtocol(protocol: string, asset: string, amount: string, yieldAmount: string): Promise<any> {
+     const amountWei = ethers.parseEther(amount);
+     const yieldWei = ethers.parseEther(yieldAmount);
+     return await this.contracts.optimizedTULL.returnAssets(protocol, asset, amountWei, yieldWei);
+   }
+
+   async detectAndReallocate(asset: string): Promise<any> {
+     return await this.contracts.optimizedTULL.detectAndReallocate(asset);
+   }
+
+   async registerProtocolToOptimizedTULL(protocol: string, yieldRate: number, maxCapacity: string): Promise<any> {
+     const capacityWei = ethers.parseEther(maxCapacity);
+     return await this.contracts.optimizedTULL.registerProtocol(protocol, yieldRate, capacityWei);
+   }
+
+   async addSupportedAssetToOptimizedTULL(asset: string, idleThreshold: string): Promise<any> {
+     const thresholdWei = ethers.parseEther(idleThreshold);
+     return await this.contracts.optimizedTULL.addSupportedAsset(asset, thresholdWei);
+   }
+
+   async getOptimizedTULLTotalLiquidity(asset: string): Promise<string> {
+     const total = await this.contracts.optimizedTULL.getTotalLiquidity(asset);
+     return ethers.formatEther(total);
+   }
+
+   async getOptimizedTULLAvailableLiquidity(asset: string): Promise<string> {
+     const available = await this.contracts.optimizedTULL.getAvailableLiquidity(asset);
+     return ethers.formatEther(available);
+   }
+
+   async getOptimizedTULLUserBalance(user: string, asset: string): Promise<string> {
+     const balance = await this.contracts.optimizedTULL.getUserBalance(user, asset);
+     return ethers.formatEther(balance);
+   }
+
+   async getOptimizedTULLProtocolAllocation(protocol: string, asset: string): Promise<string> {
+     const allocation = await this.contracts.optimizedTULL.getProtocolAllocation(protocol, asset);
+     return ethers.formatEther(allocation);
+   }
+
+   async getOptimizedTULLSupportedAssets(): Promise<string[]> {
+     return await this.contracts.optimizedTULL.getSupportedAssets();
+   }
+
+   async getOptimizedTULLRegisteredProtocols(): Promise<string[]> {
+     return await this.contracts.optimizedTULL.getRegisteredProtocols();
+   }
+
+   async getOptimizedTULLAssetState(asset: string): Promise<any> {
+     return await this.contracts.optimizedTULL.assetStates(asset);
+   }
+
+   async getOptimizedTULLProtocolInfo(protocol: string): Promise<any> {
+     return await this.contracts.optimizedTULL.protocols(protocol);
+   }
+
+   async emergencyWithdrawFromOptimizedTULL(asset: string, amount: string): Promise<any> {
+     const amountWei = ethers.parseEther(amount);
+     return await this.contracts.optimizedTULL.emergencyWithdraw(asset, amountWei);
+   }
+
+   async updateProtocolYieldInOptimizedTULL(protocol: string, newYieldRate: number): Promise<any> {
+     return await this.contracts.optimizedTULL.updateProtocolYield(protocol, newYieldRate);
+   }
+
+   async deactivateProtocolInOptimizedTULL(protocol: string): Promise<any> {
+     return await this.contracts.optimizedTULL.deactivateProtocol(protocol);
+   }
+
   // Get all contract addresses
   getContractAddresses() {
     return CONTRACT_ADDRESSES;
@@ -560,6 +756,8 @@ export {
   REVENUE_MODEL_ABI,
   DEPOSIT_MANAGER_ABI,
   LENDING_MARKET_ABI,
+  SIMPLE_TULL_ABI,
+  OPTIMIZED_TULL_ABI,
 };
 
 // Export types

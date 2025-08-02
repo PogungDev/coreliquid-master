@@ -16,6 +16,16 @@ export default function HomePage() {
 
   const strategies = [
     {
+      id: "optimized-tull",
+      name: "OPTIMIZED_TULL",
+      description: "True Unified Liquidity Layer with cross-protocol asset sharing and auto-reallocation",
+      apy: "18.5%",
+      tvl: "$1.2M",
+      risk: "Medium",
+      icon: "🔄",
+      features: ["Cross-protocol", "Auto-reallocation", "Single storage"]
+    },
+    {
       id: "adaptive-yield",
       name: "ADAPTIVE_YIELD_ENGINE",
       description: "AI-powered dynamic allocation across 15+ DeFi protocols with real-time rebalancing",
@@ -49,8 +59,12 @@ export default function HomePage() {
 
   const handleStrategyClick = (strategyId: string) => {
     setSelectedStrategy(strategyId)
-    // Navigate to vault page with selected strategy
-    window.location.href = `/vault?strategy=${strategyId}`
+    // Navigate to appropriate page based on strategy
+    if (strategyId === 'optimized-tull') {
+      window.location.href = '/optimized-tull'
+    } else {
+      window.location.href = `/vault?strategy=${strategyId}`
+    }
   }
 
   return (
@@ -83,6 +97,16 @@ export default function HomePage() {
                   LAUNCH_APP
                   <ArrowRight className="ml-2 w-5 h-5" />
                 </CyberButton>
+              </Link>
+              <Link href="/optimized-tull">
+                <Button
+                  variant="outline"
+                  size="lg"
+                  className="min-w-[200px] border-orange-500/30 text-orange-400 hover:bg-orange-500/10 font-mono bg-transparent"
+                >
+                  OPTIMIZED_TULL
+                  <Zap className="ml-2 w-5 h-5" />
+                </Button>
               </Link>
               <Link href="/vault">
                 <Button

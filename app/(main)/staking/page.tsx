@@ -398,19 +398,29 @@ export default function StakingPage() {
   };
 
   const handleStake = async (poolId: string, amount: string) => {
+    if (!selectedValidator) {
+      toast.error('Please select a validator');
+      return;
+    }
+    
     setIsLoading(true);
     try {
-      // Simulate staking transaction
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      // Update user staked amount (simulation)
-      console.log(`Staked ${amount} tokens in pool ${poolId}`);
+      if (poolId === 'core-single' || poolId === 'core-btc-dual') {
+        await handleCOREStake(amount, selectedValidator);
+        toast.success('CORE staking successful!');
+      } else {
+        // For other pools, use mock for now
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        console.log(`Staked ${amount} tokens in pool ${poolId}`);
+        toast.success('Staking successful!');
+      }
       
       setIsStakeDialogOpen(false);
       setStakeAmount('');
       setSelectedPool(null);
     } catch (error) {
       console.error('Staking failed:', error);
+      toast.error('Staking failed');
     } finally {
       setIsLoading(false);
     }
@@ -419,16 +429,22 @@ export default function StakingPage() {
   const handleUnstake = async (poolId: string, amount: string) => {
     setIsLoading(true);
     try {
-      // Simulate unstaking transaction
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      console.log(`Unstaked ${amount} tokens from pool ${poolId}`);
+      if (poolId === 'core-single' || poolId === 'core-btc-dual') {
+        await handleCOREUnstake(amount, 0); // positionIndex 0 for now
+        toast.success('CORE unstaking successful!');
+      } else {
+        // For other pools, use mock for now
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        console.log(`Unstaked ${amount} tokens from pool ${poolId}`);
+        toast.success('Unstaking successful!');
+      }
       
       setIsUnstakeDialogOpen(false);
       setUnstakeAmount('');
       setSelectedPool(null);
     } catch (error) {
       console.error('Unstaking failed:', error);
+      toast.error('Unstaking failed');
     } finally {
       setIsLoading(false);
     }
@@ -437,15 +453,21 @@ export default function StakingPage() {
   const handleClaimRewards = async (poolId: string) => {
     setIsLoading(true);
     try {
-      // Simulate claim transaction
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
-      console.log(`Claimed rewards from pool ${poolId}`);
+      if (poolId === 'core-single' || poolId === 'core-btc-dual') {
+        await handleCoreClaimRewards();
+        toast.success('Rewards claimed successfully!');
+      } else {
+        // For other pools, use mock for now
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        console.log(`Claimed rewards from pool ${poolId}`);
+        toast.success('Rewards claimed successfully!');
+      }
       
       setIsClaimDialogOpen(false);
       setSelectedPool(null);
     } catch (error) {
       console.error('Claim failed:', error);
+      toast.error('Claim failed');
     } finally {
       setIsLoading(false);
     }

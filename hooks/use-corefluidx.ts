@@ -26,7 +26,7 @@ interface UseCoreFluidXReturn {
   
   // ULP Operations
   depositToULP: (token: string, amount: string) => Promise<void>
-  withdrawFromULP: (shares: string) => Promise<void>
+  withdrawFromULP: (token: string, amount: string) => Promise<void>
   refreshULPData: () => Promise<void>
   
   // Revenue Operations
@@ -276,7 +276,7 @@ export const useCoreFluidX = (options: UseCoreFluidXOptions = {}): UseCoreFluidX
     }
   }, [contracts, dispatch])
 
-  const withdrawFromULP = useCallback(async (shares: string) => {
+  const withdrawFromULP = useCallback(async (token: string, amount: string) => {
     if (!contracts) {
       toast.error('Contracts not initialized')
       return
@@ -286,7 +286,7 @@ export const useCoreFluidX = (options: UseCoreFluidXOptions = {}): UseCoreFluidX
       setIsTransactionPending(true)
       dispatch({ type: 'SET_LOADING', payload: { key: 'ulp', loading: true } })
       
-      const tx = await contracts.withdrawFromULP(shares)
+      const tx = await contracts.withdrawFromULP(token, amount)
       console.log(`🔄 Withdraw Transaction Hash: ${tx.hash}`)
       toast.info(`Transaction submitted: ${tx.hash.slice(0, 10)}...`)
       
@@ -333,7 +333,7 @@ export const useCoreFluidX = (options: UseCoreFluidXOptions = {}): UseCoreFluidX
       setIsTransactionPending(true)
       dispatch({ type: 'SET_LOADING', payload: { key: 'revenue', loading: true } })
       
-      const tx = await contracts.claimRevenue(state.accountAddress)
+      const tx = await contracts.claimRevenue()
       console.log(`🔄 Claim Revenue Transaction Hash: ${tx.hash}`)
       toast.info(`Transaction submitted: ${tx.hash.slice(0, 10)}...`)
       

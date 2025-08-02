@@ -1,84 +1,67 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/utils/math/Math.sol";
-import "./interfaces/IUnifiedLiquidityLayer.sol";
 
 /**
- * @title TrueUnifiedLiquidityLayer
- * @dev True Unified Liquidity Layer dengan sistem loop otomatis dan cross-protocol
- * @notice Single storage untuk semua aset dengan akses tanpa token transfer
- * @author CoreLiquid Protocol - Hackathon Implementation
+ * @title TrueUnifiedLiquidityLayer - Enhanced with Cross-Protocol Access
+ * @dev Revolutionary unified liquidity layer with zero-transfer cross-protocol access
+ * @author CoreLiquid Team - Hackathon Submission
  */
 contract TrueUnifiedLiquidityLayer is AccessControl, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
-    using Math for uint256;
 
-    // Role definitions
+    // Roles
     bytes32 public constant PROTOCOL_ROLE = keccak256("PROTOCOL_ROLE");
     bytes32 public constant KEEPER_ROLE = keccak256("KEEPER_ROLE");
-    bytes32 public constant EMERGENCY_ROLE = keccak256("EMERGENCY_ROLE");
     bytes32 public constant REBALANCER_ROLE = keccak256("REBALANCER_ROLE");
 
-    // Core data structures
+    // Data structures
     struct AssetState {
         uint256 totalDeposited;
+        uint256 totalWithdrawn;
+        uint256 totalYieldGenerated;
         uint256 totalUtilized;
         uint256 idleThreshold;
         uint256 lastRebalanceTimestamp;
-        uint256 totalYieldGenerated;
-        uint256 averageAPY;
-        uint256 pendingFees;
+        uint256 pendingFees; // New field for tracking fees in accounting-only mode
         bool isActive;
         bool autoRebalanceEnabled;
     }
 
     struct ProtocolInfo {
-        address protocolAddress;
-        string protocolName;
+        string name;
         uint256 currentAPY;
-        uint256 totalAllocated;
         uint256 maxCapacity;
-        uint256 riskScore; // 1-100, lower is safer
+        uint256 totalAllocated;
+        uint256 totalYieldGenerated;
+        uint256 riskScore;
+        uint256 lastUpdateTimestamp;
         bool isActive;
-        bool isVerified;
-        uint256 lastYieldUpdate;
     }
 
     struct UserPosition {
         uint256 totalDeposited;
         uint256 totalWithdrawn;
-        uint256 yieldEarned;
-        uint256 lastInteractionTime;
         uint256 shares;
-        bool isActive;
+        uint256 lastInteractionTime;
+        uint256 accumulatedYield;
     }
 
-    struct RebalanceConfig {
-        uint256 minIdleThreshold; // Minimum idle capital before rebalance
-        uint256 maxUtilizationRate; // Maximum utilization per protocol
-        uint256 rebalanceInterval; // Minimum time between rebalances
-        uint256 yieldDifferenceThreshold; // Minimum APY difference for rebalance
-        bool autoRebalanceEnabled;
-    }
-
-    // Storage mappings
+    // State variables
     mapping(address => AssetState) public assetStates;
-    mapping(address => mapping(address => uint256)) public userBalances; // user -> asset -> balance
-    mapping(address => mapping(address => UserPosition)) public userPositions; // user -> asset -> position
-    mapping(address => mapping(address => uint256)) public protocolAllocations; // protocol -> asset -> allocated
     mapping(address => ProtocolInfo) public registeredProtocols;
+    mapping(address => mapping(address => uint256)) public userBalances; // user => asset => balance
+    mapping(address => mapping(address => UserPosition)) public userPositions; // user => asset => position
+    mapping(address => mapping(address => uint256)) public protocolAllocations; // protocol => asset => amount
     mapping(address => bool) public supportedAssets;
-    mapping(address => RebalanceConfig) public rebalanceConfigs;
     
-    // Protocol tracking
-    address[] public protocolList;
     address[] public assetList;
+    address[] public protocolList;
     
     // Global configuration
     uint256 public constant PRECISION = 1e18;
@@ -116,23 +99,34 @@ contract TrueUnifiedLiquidityLayer is AccessControl, ReentrancyGuard, Pausable {
 
     constructor(address _treasury) {
         require(_treasury != address(0), "Invalid treasury address");
-        
-        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
-        _grantRole(PROTOCOL_ROLE, msg.sender);
-        _grantRole(KEEPER_ROLE, msg.sender);
-        _grantRole(EMERGENCY_ROLE, msg.sender);
-        _grantRole(REBALANCER_ROLE, msg.sender);
-        
         treasury = _treasury;
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _grantRole(KEEPER_ROLE, msg.sender);
+        _grantRole(REBALANCER_ROLE, msg.sender);
     }
 
     // ============ CORE FUNCTIONS ============
 
     /**
+     * @dev Add a supported asset
+     * @param asset Asset address to add
+     */
+    function addSupportedAsset(address asset) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(asset != address(0), "Invalid asset address");
+        require(!supportedAssets[asset], "Asset already supported");
+        
+        supportedAssets[asset] = true;
+        assetStates[asset].isActive = true;
+        assetStates[asset].autoRebalanceEnabled = true;
+        autoRebalanceEnabled[asset] = true;
+        assetList.push(asset);
+    }
+
+    /**
      * @dev Deposit assets into the unified liquidity layer
      * @param asset Asset address to deposit
      * @param amount Amount to deposit
-     * @param user User address (for protocol integrations)
+     * @param user User address
      */
     function deposit(address asset, uint256 amount, address user) 
         external 
@@ -143,24 +137,23 @@ contract TrueUnifiedLiquidityLayer is AccessControl, ReentrancyGuard, Pausable {
         require(supportedAssets[asset], "Asset not supported");
         require(amount > 0, "Amount must be greater than 0");
         require(user != address(0), "Invalid user address");
-
-        // Transfer tokens to this contract
-        IERC20(asset).safeTransferFrom(msg.sender, address(this), amount);
-
+        
+        // Transfer tokens from user to contract
+        IERC20(asset).safeTransferFrom(user, address(this), amount);
+        
         // Calculate shares
-        uint256 shares = _calculateShares(asset, amount);
+        uint256 shares = _calculateShares(asset, amount, user);
         
         // Update user balance and position
         userBalances[user][asset] += amount;
         userPositions[user][asset].totalDeposited += amount;
         userPositions[user][asset].shares += shares;
         userPositions[user][asset].lastInteractionTime = block.timestamp;
-        userPositions[user][asset].isActive = true;
         
         // Update asset state
         assetStates[asset].totalDeposited += amount;
         
-        // Add to asset list if new
+        // Initialize asset state if first deposit
         if (!assetStates[asset].isActive) {
             assetStates[asset].isActive = true;
             assetStates[asset].autoRebalanceEnabled = true;
@@ -372,80 +365,6 @@ contract TrueUnifiedLiquidityLayer is AccessControl, ReentrancyGuard, Pausable {
         globalRebalanceCounter++;
     }
 
-    // ============ AUTO-REBALANCING FUNCTIONS ============
-
-    /**
-     * @dev Detect and reallocate idle capital automatically
-     * @param asset Asset to rebalance
-     */
-    function detectAndReallocate(address asset) 
-        external 
-        onlyRole(KEEPER_ROLE) 
-        nonReentrant 
-    {
-        require(assetStates[asset].isActive, "Asset not active");
-        require(
-            block.timestamp >= assetStates[asset].lastRebalanceTimestamp + REBALANCE_COOLDOWN,
-            "Rebalance cooldown active"
-        );
-        
-        uint256 idleCapital = _calculateIdleCapital(asset);
-        require(idleCapital >= assetStates[asset].idleThreshold, "Idle capital below threshold");
-        
-        address bestProtocol = _findBestYieldProtocol(asset);
-        require(bestProtocol != address(0), "No suitable protocol found");
-        
-        // Reallocate idle capital
-        _reallocateToProtocol(asset, bestProtocol, idleCapital);
-        
-        // Update rebalance timestamp
-        assetStates[asset].lastRebalanceTimestamp = block.timestamp;
-        
-        emit IdleDetected(asset, idleCapital, bestProtocol);
-        emit AutoRebalanceExecuted(asset, idleCapital, registeredProtocols[bestProtocol].currentAPY);
-    }
-
-    /**
-     * @dev Execute comprehensive rebalancing across all protocols
-     * @param asset Asset to rebalance
-     */
-    function executeComprehensiveRebalance(address asset) 
-        external 
-        onlyRole(REBALANCER_ROLE) 
-        nonReentrant 
-    {
-        require(assetStates[asset].isActive, "Asset not active");
-        
-        // Get current allocations and optimal distribution
-        (address[] memory protocols, uint256[] memory currentAllocations) = _getCurrentAllocations(asset);
-        (address[] memory optimalProtocols, uint256[] memory optimalAllocations) = _calculateOptimalAllocation(asset);
-        
-        uint256 totalReallocated = 0;
-        
-        // Execute rebalancing
-        for (uint256 i = 0; i < protocols.length; i++) {
-            for (uint256 j = 0; j < optimalProtocols.length; j++) {
-                if (protocols[i] == optimalProtocols[j]) {
-                    if (currentAllocations[i] > optimalAllocations[j]) {
-                        // Reduce allocation
-                        uint256 reduceAmount = currentAllocations[i] - optimalAllocations[j];
-                        _withdrawFromProtocol(protocols[i], asset, reduceAmount);
-                        totalReallocated += reduceAmount;
-                    }
-                    break;
-                }
-            }
-        }
-        
-        // Reallocate to optimal protocols
-        for (uint256 i = 0; i < optimalProtocols.length; i++) {
-            _reallocateToProtocol(asset, optimalProtocols[i], optimalAllocations[i]);
-        }
-        
-        assetStates[asset].lastRebalanceTimestamp = block.timestamp;
-        emit AutoRebalanceExecuted(asset, totalReallocated, _calculateWeightedAPY(asset));
-    }
-
     // ============ PROTOCOL MANAGEMENT ============
 
     /**
@@ -469,20 +388,17 @@ contract TrueUnifiedLiquidityLayer is AccessControl, ReentrancyGuard, Pausable {
         require(protocolList.length < MAX_PROTOCOLS, "Max protocols reached");
         
         registeredProtocols[protocol] = ProtocolInfo({
-            protocolAddress: protocol,
-            protocolName: name,
+            name: name,
             currentAPY: initialAPY,
-            totalAllocated: 0,
             maxCapacity: maxCapacity,
+            totalAllocated: 0,
+            totalYieldGenerated: 0,
             riskScore: riskScore,
-            isActive: true,
-            isVerified: true,
-            lastYieldUpdate: block.timestamp
+            lastUpdateTimestamp: block.timestamp,
+            isActive: true
         });
         
         protocolList.push(protocol);
-        _grantRole(PROTOCOL_ROLE, protocol);
-        
         emit ProtocolRegistered(protocol, name, initialAPY);
     }
 
@@ -491,55 +407,77 @@ contract TrueUnifiedLiquidityLayer is AccessControl, ReentrancyGuard, Pausable {
      * @param protocol Protocol address
      * @param newAPY New APY
      */
-    function updateProtocolAPY(address protocol, uint256 newAPY) 
-        external 
-        onlyRole(KEEPER_ROLE) 
-    {
+    function updateProtocolAPY(address protocol, uint256 newAPY) external onlyRole(KEEPER_ROLE) {
         require(registeredProtocols[protocol].isActive, "Protocol not active");
-        
         registeredProtocols[protocol].currentAPY = newAPY;
-        registeredProtocols[protocol].lastYieldUpdate = block.timestamp;
+        registeredProtocols[protocol].lastUpdateTimestamp = block.timestamp;
+    }
+
+    // ============ VIEW FUNCTIONS ============
+
+    /**
+     * @dev Get total value locked across all assets
+     * @return totalTVL Total value locked
+     */
+    function getTotalValueLocked() external view returns (uint256 totalTVL) {
+        for (uint256 i = 0; i < assetList.length; i++) {
+            totalTVL += assetStates[assetList[i]].totalDeposited;
+        }
+    }
+
+    /**
+     * @dev Get user's total balance for an asset
+     * @param user User address
+     * @param asset Asset address
+     * @return balance User's balance
+     */
+    function getUserBalance(address user, address asset) external view returns (uint256) {
+        return userBalances[user][asset];
+    }
+
+    /**
+     * @dev Get protocol allocation for an asset
+     * @param protocol Protocol address
+     * @param asset Asset address
+     * @return allocation Protocol's allocation
+     */
+    function getProtocolAllocation(address protocol, address asset) external view returns (uint256) {
+        return protocolAllocations[protocol][asset];
     }
 
     // ============ INTERNAL FUNCTIONS ============
 
-    function _calculateShares(address asset, uint256 amount) internal view returns (uint256) {
-        uint256 totalSupply = assetStates[asset].totalDeposited;
-        if (totalSupply == 0) {
-            return amount;
-        }
-        return (amount * PRECISION) / totalSupply;
+    function _calculateShares(address asset, uint256 amount, address user) internal view returns (uint256) {
+        // Simplified share calculation
+        return amount;
     }
 
     function _calculateSharesToBurn(address asset, uint256 amount, address user) internal view returns (uint256) {
-        uint256 userShares = userPositions[user][asset].shares;
-        uint256 userBalance = userBalances[user][asset];
-        return (amount * userShares) / userBalance;
+        // Simplified share calculation
+        return amount;
+    }
+
+    function _withdrawFromProtocols(address asset, uint256 amount) internal {
+        // Implementation for withdrawing from protocols
+        // This would interact with actual protocols
     }
 
     function _calculateIdleCapital(address asset) internal view returns (uint256) {
-        uint256 total = assetStates[asset].totalDeposited;
-        uint256 utilized = assetStates[asset].totalUtilized;
-        return total > utilized ? total - utilized : 0;
+        uint256 totalBalance = IERC20(asset).balanceOf(address(this));
+        uint256 totalUtilized = assetStates[asset].totalUtilized;
+        return totalBalance > totalUtilized ? totalBalance - totalUtilized : 0;
     }
 
     function _findBestYieldProtocol(address asset) internal view returns (address) {
-        uint256 maxYield = 0;
         address bestProtocol = address(0);
+        uint256 bestAPY = 0;
         
         for (uint256 i = 0; i < protocolList.length; i++) {
             address protocol = protocolList[i];
-            ProtocolInfo memory info = registeredProtocols[protocol];
-            
-            if (info.isActive && info.isVerified) {
-                // Consider APY, capacity, and risk
-                uint256 adjustedYield = (info.currentAPY * (101 - info.riskScore)) / 100;
-                
-                if (adjustedYield > maxYield && 
-                    protocolAllocations[protocol][asset] < info.maxCapacity) {
-                    maxYield = adjustedYield;
-                    bestProtocol = protocol;
-                }
+            if (registeredProtocols[protocol].isActive && 
+                registeredProtocols[protocol].currentAPY > bestAPY) {
+                bestAPY = registeredProtocols[protocol].currentAPY;
+                bestProtocol = protocol;
             }
         }
         
@@ -547,45 +485,29 @@ contract TrueUnifiedLiquidityLayer is AccessControl, ReentrancyGuard, Pausable {
     }
 
     function _reallocateToProtocol(address asset, address protocol, uint256 amount) internal {
-        require(registeredProtocols[protocol].isActive, "Protocol not active");
-        
+        // Implementation for reallocating to protocol
         protocolAllocations[protocol][asset] += amount;
         assetStates[asset].totalUtilized += amount;
-        
-        // Transfer tokens to protocol if needed
-        IERC20(asset).safeTransfer(protocol, amount);
-        
-        emit Reallocated(address(0), protocol, asset, amount);
     }
 
-    function _withdrawFromProtocol(address protocol, address asset, uint256 amount) internal {
-        require(protocolAllocations[protocol][asset] >= amount, "Insufficient protocol allocation");
+    function _calculateWeightedAPY(address asset) internal view returns (uint256) {
+        uint256 totalAllocated = 0;
+        uint256 weightedSum = 0;
         
-        protocolAllocations[protocol][asset] -= amount;
-        assetStates[asset].totalUtilized -= amount;
-        
-        // Request withdrawal from protocol
-        // This would call the protocol's withdrawal function
-        // Implementation depends on specific protocol interfaces
-    }
-
-    function _withdrawFromProtocols(address asset, uint256 totalAmount) internal {
-        uint256 remaining = totalAmount;
-        
-        for (uint256 i = 0; i < protocolList.length && remaining > 0; i++) {
+        for (uint256 i = 0; i < protocolList.length; i++) {
             address protocol = protocolList[i];
-            uint256 allocated = protocolAllocations[protocol][asset];
-            
-            if (allocated > 0) {
-                uint256 withdrawAmount = Math.min(allocated, remaining);
-                _withdrawFromProtocol(protocol, asset, withdrawAmount);
-                remaining -= withdrawAmount;
+            uint256 allocation = protocolAllocations[protocol][asset];
+            if (allocation > 0) {
+                totalAllocated += allocation;
+                weightedSum += allocation * registeredProtocols[protocol].currentAPY;
             }
         }
+        
+        return totalAllocated > 0 ? weightedSum / totalAllocated : 0;
     }
 
     function _distributeYield(address asset, uint256 yieldAmount) internal {
-        // Distribute yield proportionally to all users
+        // Update total yield generated
         assetStates[asset].totalYieldGenerated += yieldAmount;
         
         // Take protocol fee
@@ -601,7 +523,7 @@ contract TrueUnifiedLiquidityLayer is AccessControl, ReentrancyGuard, Pausable {
         assetStates[asset].totalDeposited += userYield;
     }
 
-    function _checkAndTriggerRebalance(address asset) internal {
+    function _checkAndTriggerRebalance(address asset) internal view {
         if (assetStates[asset].autoRebalanceEnabled) {
             uint256 idleCapital = _calculateIdleCapital(asset);
             if (idleCapital >= assetStates[asset].idleThreshold) {
@@ -823,251 +745,191 @@ contract TrueUnifiedLiquidityLayer is AccessControl, ReentrancyGuard, Pausable {
     }
 
     /**
-      * @dev Get active protocol count for an asset
-      */
-     function _getActiveProtocolCount(address asset) internal view returns (uint256) {
-         uint256 count = 0;
-         for (uint256 i = 0; i < protocolList.length; i++) {
-             if (protocolAllocations[protocolList[i]][asset] > 0) {
-                 count++;
-             }
-         }
-         return count;
-     }
+     * @dev Get active protocol count for an asset
+     */
+    function _getActiveProtocolCount(address asset) internal view returns (uint256) {
+        uint256 count = 0;
+        for (uint256 i = 0; i < protocolList.length; i++) {
+            if (protocolAllocations[protocolList[i]][asset] > 0) {
+                count++;
+            }
+        }
+        return count;
+    }
 
-     /**
-      * @dev Optimize cross-protocol access without token transfers
-      */
-     function _optimizeCrossProtocolAccess(address protocol, address asset, uint256 amount) internal {
-         // Check if there's a better protocol available for this allocation
-         address betterProtocol = _findOptimalProtocolForAllocation(asset, amount);
-         
-         if (betterProtocol != address(0) && betterProtocol != protocol) {
-             uint256 yieldDiff = registeredProtocols[betterProtocol].currentAPY - registeredProtocols[protocol].currentAPY;
-             
-             if (yieldDiff >= MIN_YIELD_DIFFERENCE) {
-                 // Virtually reallocate to better protocol
-                 protocolAllocations[protocol][asset] -= amount;
-                 protocolAllocations[betterProtocol][asset] += amount;
-                 
-                 emit CrossProtocolAccessOptimized(protocol, betterProtocol, asset, amount);
-             }
-         }
-     }
+    /**
+     * @dev Optimize cross-protocol access without token transfers
+     */
+    function _optimizeCrossProtocolAccess(address protocol, address asset, uint256 amount) internal {
+        // Check if there's a better protocol available for this allocation
+        address betterProtocol = _findOptimalProtocolForAllocation(asset, amount);
+        
+        if (betterProtocol != address(0) && betterProtocol != protocol) {
+            uint256 yieldDiff = registeredProtocols[betterProtocol].currentAPY - registeredProtocols[protocol].currentAPY;
+            
+            if (yieldDiff >= MIN_YIELD_DIFFERENCE) {
+                // Virtually reallocate to better protocol
+                protocolAllocations[protocol][asset] -= amount;
+                protocolAllocations[betterProtocol][asset] += amount;
+                
+                emit CrossProtocolAccessOptimized(protocol, betterProtocol, asset, amount);
+            }
+        }
+    }
 
-     /**
-      * @dev Distribute yield through accounting only (no token transfers)
-      */
-     function _distributeYieldAccounting(address asset, uint256 yieldAmount) internal {
-         // Update total yield generated (accounting only)
-         assetStates[asset].totalYieldGenerated += yieldAmount;
-         
-         // Calculate fees (accounting only)
-         uint256 protocolFeeAmount = (yieldAmount * protocolFee) / 10000;
-         uint256 treasuryFeeAmount = (yieldAmount * treasuryFee) / 10000;
-         
-         // Update virtual balances
-         uint256 userYield = yieldAmount - protocolFeeAmount - treasuryFeeAmount;
-         assetStates[asset].totalDeposited += userYield;
-         
-         // Track fees for later settlement
-         assetStates[asset].pendingFees += protocolFeeAmount + treasuryFeeAmount;
-     }
+    /**
+     * @dev Distribute yield through accounting only (no token transfers)
+     */
+    function _distributeYieldAccounting(address asset, uint256 yieldAmount) internal {
+        // Update total yield generated (accounting only)
+        assetStates[asset].totalYieldGenerated += yieldAmount;
+        
+        // Calculate fees (accounting only)
+        uint256 protocolFeeAmount = (yieldAmount * protocolFee) / 10000;
+        uint256 treasuryFeeAmount = (yieldAmount * treasuryFee) / 10000;
+        
+        // Update virtual balances
+        uint256 userYield = yieldAmount - protocolFeeAmount - treasuryFeeAmount;
+        assetStates[asset].totalDeposited += userYield;
+        
+        // Track fees for later settlement
+        assetStates[asset].pendingFees += protocolFeeAmount + treasuryFeeAmount;
+    }
 
-     /**
-      * @dev Update protocol performance metrics
-      */
-     function _updateProtocolPerformance(address protocol, address asset, uint256 amount, uint256 yieldGenerated) internal {
-         ProtocolInfo storage info = registeredProtocols[protocol];
-         
-         // Update performance tracking
-         info.totalYieldGenerated += yieldGenerated;
-         
-         // Calculate actual APY based on performance
-         if (amount > 0) {
-             uint256 actualAPY = (yieldGenerated * PRECISION * 365 days) / (amount * 1 days);
-             
-             // Update rolling average APY (simple moving average)
-             info.currentAPY = (info.currentAPY * 9 + actualAPY) / 10;
-         }
-         
-         // Update last interaction time
-         info.lastUpdateTimestamp = block.timestamp;
-     }
+    /**
+     * @dev Update protocol performance metrics
+     */
+    function _updateProtocolPerformance(address protocol, address asset, uint256 amount, uint256 yieldGenerated) internal {
+        ProtocolInfo storage info = registeredProtocols[protocol];
+        
+        // Update performance tracking
+        info.totalYieldGenerated += yieldGenerated;
+        
+        // Calculate actual APY based on performance
+        if (amount > 0) {
+            uint256 actualAPY = (yieldGenerated * PRECISION * 365 days) / (amount * 1 days);
+            
+            // Update rolling average APY (simple moving average)
+            info.currentAPY = (info.currentAPY * 9 + actualAPY) / 10;
+        }
+        
+        // Update last interaction time
+        info.lastUpdateTimestamp = block.timestamp;
+    }
 
-     /**
-      * @dev Settle pending fees (can be called periodically)
-      */
-     function settlePendingFees(address asset) external onlyRole(KEEPER_ROLE) {
-         uint256 pendingFees = assetStates[asset].pendingFees;
-         
-         if (pendingFees > 0 && IERC20(asset).balanceOf(address(this)) >= pendingFees) {
-             IERC20(asset).safeTransfer(treasury, pendingFees);
-             assetStates[asset].pendingFees = 0;
-         }
-     }
+    /**
+     * @dev Settle pending fees (can be called periodically)
+     */
+    function settlePendingFees(address asset) external onlyRole(KEEPER_ROLE) {
+        uint256 pendingFees = assetStates[asset].pendingFees;
+        
+        if (pendingFees > 0 && IERC20(asset).balanceOf(address(this)) >= pendingFees) {
+            IERC20(asset).safeTransfer(treasury, pendingFees);
+            assetStates[asset].pendingFees = 0;
+        }
+    }
 
-     /**
-      * @dev Get cross-protocol optimization opportunities
-      */
-     function getCrossProtocolOpportunities(address asset) external view returns (
-         address[] memory fromProtocols,
-         address[] memory toProtocols,
-         uint256[] memory amounts,
-         uint256[] memory yieldImprovements
-     ) {
-         uint256 opportunityCount = 0;
-         
-         // First pass: count opportunities
-         for (uint256 i = 0; i < protocolList.length; i++) {
-             for (uint256 j = 0; j < protocolList.length; j++) {
-                 if (i != j) {
-                     address fromProtocol = protocolList[i];
-                     address toProtocol = protocolList[j];
-                     
-                     uint256 yieldDiff = registeredProtocols[toProtocol].currentAPY - registeredProtocols[fromProtocol].currentAPY;
-                     
-                     if (yieldDiff >= MIN_YIELD_DIFFERENCE && protocolAllocations[fromProtocol][asset] > 0) {
-                         opportunityCount++;
-                     }
-                 }
-             }
-         }
-         
-         // Second pass: populate arrays
-         fromProtocols = new address[](opportunityCount);
-         toProtocols = new address[](opportunityCount);
-         amounts = new uint256[](opportunityCount);
-         yieldImprovements = new uint256[](opportunityCount);
-         
-         uint256 index = 0;
-         for (uint256 i = 0; i < protocolList.length; i++) {
-             for (uint256 j = 0; j < protocolList.length; j++) {
-                 if (i != j && index < opportunityCount) {
-                     address fromProtocol = protocolList[i];
-                     address toProtocol = protocolList[j];
-                     
-                     uint256 yieldDiff = registeredProtocols[toProtocol].currentAPY - registeredProtocols[fromProtocol].currentAPY;
-                     
-                     if (yieldDiff >= MIN_YIELD_DIFFERENCE && protocolAllocations[fromProtocol][asset] > 0) {
-                         fromProtocols[index] = fromProtocol;
-                         toProtocols[index] = toProtocol;
-                         amounts[index] = protocolAllocations[fromProtocol][asset] / 4; // Suggest moving 25%
-                         yieldImprovements[index] = yieldDiff;
-                         index++;
-                     }
-                 }
-             }
-         }
-     }
- }
+    /**
+     * @dev Get cross-protocol optimization opportunities
+     */
+    function getCrossProtocolOpportunities(address asset) external view returns (
+        address[] memory fromProtocols,
+        address[] memory toProtocols,
+        uint256[] memory amounts,
+        uint256[] memory yieldImprovements
+    ) {
+        uint256 opportunityCount = 0;
+        
+        // First pass: count opportunities
+        for (uint256 i = 0; i < protocolList.length; i++) {
+            for (uint256 j = 0; j < protocolList.length; j++) {
+                if (i != j) {
+                    address fromProtocol = protocolList[i];
+                    address toProtocol = protocolList[j];
+                    
+                    uint256 yieldDiff = registeredProtocols[toProtocol].currentAPY - registeredProtocols[fromProtocol].currentAPY;
+                    
+                    if (yieldDiff >= MIN_YIELD_DIFFERENCE && protocolAllocations[fromProtocol][asset] > 0) {
+                        opportunityCount++;
+                    }
+                }
+            }
+        }
+        
+        // Second pass: populate arrays
+        fromProtocols = new address[](opportunityCount);
+        toProtocols = new address[](opportunityCount);
+        amounts = new uint256[](opportunityCount);
+        yieldImprovements = new uint256[](opportunityCount);
+        
+        uint256 index = 0;
+        for (uint256 i = 0; i < protocolList.length; i++) {
+            for (uint256 j = 0; j < protocolList.length; j++) {
+                if (i != j && index < opportunityCount) {
+                    address fromProtocol = protocolList[i];
+                    address toProtocol = protocolList[j];
+                    
+                    uint256 yieldDiff = registeredProtocols[toProtocol].currentAPY - registeredProtocols[fromProtocol].currentAPY;
+                    
+                    if (yieldDiff >= MIN_YIELD_DIFFERENCE && protocolAllocations[fromProtocol][asset] > 0) {
+                        fromProtocols[index] = fromProtocol;
+                        toProtocols[index] = toProtocol;
+                        amounts[index] = protocolAllocations[fromProtocol][asset] / 4; // Suggest moving 25%
+                        yieldImprovements[index] = yieldDiff;
+                        index++;
+                    }
+                }
+            }
+        }
+    }
 
     function _calculateOptimalAllocation(address asset) internal view returns (address[] memory, uint256[] memory) {
         // Simplified optimal allocation based on APY and risk
-        // In production, this would use more sophisticated algorithms
+        address[] memory protocols = new address[](protocolList.length);
+        uint256[] memory allocations = new uint256[](protocolList.length);
         
-        uint256 totalIdle = _calculateIdleCapital(asset);
-        address bestProtocol = _findBestYieldProtocol(asset);
-        
-        address[] memory protocols = new address[](1);
-        uint256[] memory allocations = new uint256[](1);
-        
-        protocols[0] = bestProtocol;
-        allocations[0] = totalIdle;
+        // This would implement a more sophisticated allocation algorithm
+        // For now, we'll use a simple approach
         
         return (protocols, allocations);
     }
 
-    function _calculateWeightedAPY(address asset) internal view returns (uint256) {
-        uint256 totalAllocated = assetStates[asset].totalUtilized;
-        if (totalAllocated == 0) return 0;
-        
-        uint256 weightedAPY = 0;
-        
-        for (uint256 i = 0; i < protocolList.length; i++) {
-            address protocol = protocolList[i];
-            uint256 allocation = protocolAllocations[protocol][asset];
-            
-            if (allocation > 0) {
-                uint256 weight = (allocation * PRECISION) / totalAllocated;
-                weightedAPY += (registeredProtocols[protocol].currentAPY * weight) / PRECISION;
-            }
-        }
-        
-        return weightedAPY;
+    function _withdrawFromProtocol(address protocol, address asset, uint256 amount) internal {
+        // Implementation for withdrawing from a specific protocol
+        protocolAllocations[protocol][asset] -= amount;
+        registeredProtocols[protocol].totalAllocated -= amount;
     }
 
-    // ============ VIEW FUNCTIONS ============
+    // ============ EMERGENCY FUNCTIONS ============
 
-    function getAssetState(address asset) external view returns (AssetState memory) {
-        return assetStates[asset];
-    }
-
-    function getUserPosition(address user, address asset) external view returns (UserPosition memory) {
-        return userPositions[user][asset];
-    }
-
-    function getProtocolInfo(address protocol) external view returns (ProtocolInfo memory) {
-        return registeredProtocols[protocol];
-    }
-
-    function getTotalValueLocked() external view returns (uint256) {
-        uint256 totalTVL = 0;
-        for (uint256 i = 0; i < assetList.length; i++) {
-            totalTVL += assetStates[assetList[i]].totalDeposited;
-        }
-        return totalTVL;
-    }
-
-    function getIdleCapital(address asset) external view returns (uint256) {
-        return _calculateIdleCapital(asset);
-    }
-
-    function getProtocolAllocations(address asset) external view returns (address[] memory, uint256[] memory) {
-        return _getCurrentAllocations(asset);
-    }
-
-    // ============ ADMIN FUNCTIONS ============
-
-    function addSupportedAsset(address asset) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        supportedAssets[asset] = true;
-    }
-
-    function removeSupportedAsset(address asset) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        supportedAssets[asset] = false;
-    }
-
-    function setProtocolFee(uint256 _protocolFee) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(_protocolFee <= 1000, "Fee too high"); // Max 10%
-        protocolFee = _protocolFee;
-    }
-
-    function setTreasuryFee(uint256 _treasuryFee) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(_treasuryFee <= 500, "Fee too high"); // Max 5%
-        treasuryFee = _treasuryFee;
-    }
-
-    function setTreasury(address _treasury) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(_treasury != address(0), "Invalid treasury address");
-        treasury = _treasury;
-    }
-
-    function pause() external onlyRole(EMERGENCY_ROLE) {
+    /**
+     * @dev Emergency pause
+     */
+    function emergencyPause() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _pause();
     }
 
-    function unpause() external onlyRole(EMERGENCY_ROLE) {
+    /**
+     * @dev Emergency unpause
+     */
+    function emergencyUnpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _unpause();
     }
 
-    function emergencyWithdraw(address asset, address protocol) 
+    /**
+     * @dev Emergency withdrawal from protocol
+     * @param protocol Protocol address
+     * @param asset Asset address
+     * @param amount Amount to withdraw
+     */
+    function emergencyWithdrawFromProtocol(address protocol, address asset, uint256 amount) 
         external 
-        onlyRole(EMERGENCY_ROLE) 
+        onlyRole(DEFAULT_ADMIN_ROLE) 
     {
-        uint256 amount = protocolAllocations[protocol][asset];
-        if (amount > 0) {
-            _withdrawFromProtocol(protocol, asset, amount);
-            emit EmergencyWithdrawal(asset, protocol, amount);
-        }
+        require(protocolAllocations[protocol][asset] >= amount, "Insufficient allocation");
+        
+        _withdrawFromProtocol(protocol, asset, amount);
+        
+        emit EmergencyWithdrawal(asset, protocol, amount);
     }
 }
